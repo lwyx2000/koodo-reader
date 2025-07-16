@@ -1,0 +1,77 @@
+pipeline {
+    agent any
+    parameters {
+        string(name: 'SSH_USER', defaultValue: 'sos', description: 'SSH username')
+        string(name: 'SSH_PASSWORD', defaultValue: 'qwe123', description: 'SSH password')
+    }
+    stages {
+        // 1. 从GitHub拉取代码
+        stage('Checkout') {
+            steps {
+                git url: 'https://github.com/lwyx2000/koodo-reader.git',  
+                     branch: 'dev',  // 修改分支为 dev
+                     credentialsId: '8695ee47-da56-48c6-845e-0631ba4db951'  
+            }
+        }
+
+        // 2. 编译项目
+        stage('Build') {
+            steps {
+                script {
+                    def nodeHome = tool 'nodejs'
+                    env.PATH = "${nodeHome}/bin:${env.PATH}"
+                    sh 'echo $PATH'
+                    sh 'node -v'
+                    sh 'npm -v'
+                }
+                
+                // 安装必要的系统依赖
+                sh '''
+                apt-get update || true
+                apt-get install -y python3 python-is-python3 || true
+                python --version || python3 --version || true
+                '''
+                
+                sh 'npm config set registry https://registry.npmmirror.com'
+                sh 'cd server && npm install --legacy-peer-deps'
+                
+                // 修改 package.json 移除 postinstall 脚本，避免执行 fix-nan.js
+                sh '''
+                # 暂时备份原始 package.json
+                cp package.json package.json.bak
+                
+                # 使用 sed 移除 postinstall 脚本
+                sed -i 's/"postinstall": "node scripts\\/fix-nan.js && electron-builder install-app-deps"/"postinstall": ""/g' package.json
+                
+                # 修改 package.json 添加 --ignore-scripts 标志
+                sed -i 's/"build": "react-scripts build"/"build": "react-scripts --openssl-legacy-provider build"/g' package.json
+                '''
+                
+                // 安装依赖，忽略脚本
+                sh 'npm install --legacy-peer-deps --ignore-scripts'
+                
+                // 恢复原始 package.json
+                sh 'mv package.json.bak package.json'
+                
+                // 跳过 electron-builder 依赖安装
+                // 直接构建，不依赖 native 模块
+                sh 'ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm run build'
+            }
+        }
+
+        // 3. 部署静态文件
+        stage('Deploy to Nginx') {
+            steps {
+                script {
+                    sshagent(['my-ssh-credentials']) { // 请替换为实际配置的凭证ID
+                        sh """
+                            ssh sos@192.168.3.53 "rm -rf /home/sos/apps/koodo-reader/*"
+                            scp -r build/* sos@192.168.3.53:/home/sos/apps/koodo-reader/
+                            ssh sos@192.168.3.53 "sudo systemctl reload nginx"
+                        """
+                    }
+                }
+            }
+        }
+    }
+}

@@ -154,13 +154,32 @@ app.post('/api/books/upload', function(req, res) {
   });
 });
 
+// 辅助函数：查找文件的所有可能位置
+function findFilePath(filename) {
+  // 首先检查标准目录
+  const ebookPath = path.join(BOOKS_DIR, filename);
+  if (fs.existsSync(ebookPath)) {
+    return ebookPath;
+  }
+  
+  // 然后检查uploads根目录
+  const uploadsPath = path.join(UPLOADS_DIR, filename);
+  if (fs.existsSync(uploadsPath)) {
+    console.log(`Found book in uploads directory instead of ebook subdirectory: ${uploadsPath}`);
+    return uploadsPath;
+  }
+  
+  // 文件不存在
+  return null;
+}
+
 // 书籍下载接口
 app.get('/api/books/:filename', (req, res) => {
   try {
     const filename = req.params.filename;
-    const filePath = path.join(BOOKS_DIR, filename);
+    const filePath = findFilePath(filename);
     
-    if (!fs.existsSync(filePath)) {
+    if (!filePath) {
       console.error(`Download error: Book not found - ${filename}`);
       return res.status(404).json({ error: 'Book not found' });
     }
@@ -179,9 +198,9 @@ app.get('/api/books/:filename', (req, res) => {
 app.head('/api/books/:filename', (req, res) => {
   try {
     const filename = req.params.filename;
-    const filePath = path.join(BOOKS_DIR, filename);
+    const filePath = findFilePath(filename);
     
-    if (fs.existsSync(filePath)) {
+    if (filePath) {
       res.status(200).end();
     } else {
       res.status(404).end();
@@ -196,9 +215,9 @@ app.head('/api/books/:filename', (req, res) => {
 app.delete('/api/books/:filename', (req, res) => {
   try {
     const filename = req.params.filename;
-    const filePath = path.join(BOOKS_DIR, filename);
+    const filePath = findFilePath(filename);
     
-    if (!fs.existsSync(filePath)) {
+    if (!filePath) {
       // 即使文件不存在也返回成功，因为客户端需要继续执行后续逻辑
       console.log(`Delete requested for non-existent file: ${filename} - treating as success`);
       return res.json({ message: 'Book deleted successfully (file not found)' });
@@ -217,9 +236,33 @@ app.delete('/api/books/:filename', (req, res) => {
 // 获取所有书籍列表
 app.get('/api/books', (req, res) => {
   try {
-    const files = fs.readdirSync(BOOKS_DIR);
-    const books = files.map(file => {
-      const filePath = path.join(BOOKS_DIR, file);
+    // 合并两个目录中的文件列表
+    const ebookFiles = fs.readdirSync(BOOKS_DIR).map(file => ({
+      file,
+      path: path.join(BOOKS_DIR, file)
+    }));
+    
+    // 检查直接在uploads目录下的文件（排除目录）
+    const uploadsFiles = fs.readdirSync(UPLOADS_DIR)
+      .filter(file => {
+        const filePath = path.join(UPLOADS_DIR, file);
+        return fs.statSync(filePath).isFile();
+      })
+      .map(file => ({
+        file,
+        path: path.join(UPLOADS_DIR, file)
+      }));
+    
+    // 合并并去重（如果文件名相同，优先使用ebook目录的文件）
+    const allFiles = [...ebookFiles];
+    for (const uploadFile of uploadsFiles) {
+      if (!allFiles.some(f => f.file === uploadFile.file)) {
+        allFiles.push(uploadFile);
+      }
+    }
+    
+    // 转换为API响应格式
+    const books = allFiles.map(({ file, path: filePath }) => {
       const stats = fs.statSync(filePath);
       return {
         filename: file,
@@ -248,21 +291,30 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// 静态文件服务 - 用于提供web版本的前端文件
-app.use(express.static(path.join(__dirname, '../build')));
+// 服务静态文件
+// 首先尝试从服务器dist目录提供文件
+const distDir = path.join(__dirname, 'dist');
+if (fs.existsSync(distDir)) {
+  app.use(express.static(distDir));
+  console.log(`Serving static files from: ${distDir}`);
+  
+  // 所有不匹配的路由返回index.html
+  app.get('*', (req, res) => {
+    if (!req.path.startsWith('/api/')) {
+      res.sendFile(path.join(distDir, 'index.html'));
+    }
+  });
+} else {
+  console.log(`No static files to serve (${distDir} does not exist)`);
+}
 
-// 所有其他GET请求返回React应用
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, '../build', 'index.html'));
-});
-
+// 启动服务器
 app.listen(PORT, () => {
-  console.log('='.repeat(50));
-  console.log(`Koodo Reader Server is running on port ${PORT}`);
-  console.log(`Books directory: ${BOOKS_DIR}`);
-  console.log(`Max file size: ${MAX_FILE_SIZE / (1024 * 1024)}MB`);
-  console.log(`Server started at: ${new Date().toLocaleString()}`);
-  console.log('='.repeat(50));
+  console.log(`Koodo Reader Server running on port ${PORT}`);
+  console.log(`API available at: http://localhost:${PORT}/api/health`);
+  if (fs.existsSync(distDir)) {
+    console.log(`Web app available at: http://localhost:${PORT}`);
+  }
 });
 
 module.exports = app;
