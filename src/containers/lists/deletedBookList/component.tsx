@@ -12,11 +12,18 @@ import {
   ConfigService,
   SortUtil,
 } from "../../../assets/lib/kookit-extra-browser.min";
+import toast from "react-hot-toast";
+import BookUtil from "../../../utils/file/bookUtil";
+import CoverUtil from "../../../utils/file/coverUtil";
+import DatabaseService from "../../../utils/storage/databaseService";
 
 class BookList extends React.Component<BookListProps, BookListState> {
   constructor(props: BookListProps) {
     super(props);
-    this.state = { isRefreshing: false };
+    this.state = { 
+      isRefreshing: false,
+      isMultiSelect: false 
+    };
   }
   UNSAFE_componentWillMount() {
     this.props.handleFetchBooks();
@@ -59,6 +66,89 @@ class BookList extends React.Component<BookListProps, BookListState> {
 
     return itemArr;
   };
+
+  // 永久删除选中的书籍
+  handlePermanentlyDeleteSelected = async () => {
+    if (this.props.selectedBooks.length === 0) {
+      toast.error(this.props.t("No books selected"));
+      return;
+    }
+
+    try {
+      for (const bookKey of this.props.selectedBooks) {
+        const book = this.props.deletedBooks.find(item => item.key === bookKey);
+        if (!book) continue;
+        
+        const format = book.format.toLowerCase();
+        
+        await DatabaseService.deleteRecord(bookKey, "books");
+        await BookUtil.deleteBook(bookKey, format);
+        CoverUtil.deleteCover(bookKey);
+        await BookUtil.deleteBook("cache-" + bookKey, "zip");
+        
+        // 删除各种配置和引用
+        ConfigService.deleteListConfig(bookKey, "favoriteBooks");
+        ConfigService.deleteListConfig(bookKey, "deletedBooks");
+        ConfigService.deleteFromAllMapConfig(bookKey, "shelfList");
+        ConfigService.deleteListConfig(bookKey, "recentBooks");
+        ConfigService.deleteObjectConfig(bookKey, "recordLocation");
+        ConfigService.deleteObjectConfig(bookKey, "readingTime");
+        
+        // 删除相关的笔记和书签
+        await DatabaseService.deleteRecordsByBookKey(bookKey, "bookmarks");
+        await DatabaseService.deleteRecordsByBookKey(bookKey, "notes");
+      }
+      
+      this.props.handleSelectedBooks([]);
+      this.props.handleSelectBook(false);
+      this.setState({ isMultiSelect: false });
+      toast.success(this.props.t("Permanently deleted"));
+      this.props.handleFetchBooks();
+      
+      // 仅在方法存在时调用
+      if (typeof this.props.handleFetchBookmarks === 'function') {
+        this.props.handleFetchBookmarks();
+      }
+      
+      if (typeof this.props.handleFetchNotes === 'function') {
+        this.props.handleFetchNotes();
+      }
+    } catch (error) {
+      console.error("Error permanently deleting books:", error);
+      toast.error(this.props.t("Delete failed"));
+    }
+  };
+
+  // 恢复选中的书籍
+  handleRestoreSelected = () => {
+    if (this.props.selectedBooks.length === 0) {
+      toast.error(this.props.t("No books selected"));
+      return;
+    }
+
+    this.props.selectedBooks.forEach(bookKey => {
+      ConfigService.deleteListConfig(bookKey, "deletedBooks");
+    });
+    
+    this.props.handleSelectedBooks([]);
+    this.props.handleSelectBook(false);
+    this.setState({ isMultiSelect: false });
+    toast.success(this.props.t("Restore successful"));
+    this.props.handleFetchBooks();
+  };
+
+  // 切换多选模式
+  toggleMultiSelect = () => {
+    this.setState({ isMultiSelect: !this.state.isMultiSelect }, () => {
+      if (!this.state.isMultiSelect) {
+        this.props.handleSelectedBooks([]);
+        this.props.handleSelectBook(false);
+      } else {
+        this.props.handleSelectBook(true);
+      }
+    });
+  };
+
   renderBookList = () => {
     //get the book data according to different scenarios
     let books = !this.props.isBookSort
@@ -149,17 +239,51 @@ class BookList extends React.Component<BookListProps, BookListState> {
               : {}
           }
         >
-          <div></div>
-          <div
-            className="booklist-delete-container"
-            onClick={() => {
-              this.props.handleDeleteDialog(true);
-            }}
-            style={this.props.isCollapsed ? { left: "calc(50% - 60px)" } : {}}
-          >
-            <Trans>Delete all books</Trans>
-          </div>
-          <ViewMode />
+          {this.state.isMultiSelect ? (
+            <div className="trash-multi-actions">
+              <div
+                className="trash-action-btn restore-btn"
+                onClick={this.handleRestoreSelected}
+              >
+                <span className="icon-clockwise"></span>
+                <Trans>Restore Selected</Trans>
+              </div>
+              <div
+                className="trash-action-btn delete-btn"
+                onClick={this.handlePermanentlyDeleteSelected}
+              >
+                <span className="icon-trash-line"></span>
+                <Trans>Delete Selected</Trans>
+              </div>
+              <div
+                className="trash-action-btn cancel-btn"
+                onClick={this.toggleMultiSelect}
+              >
+                <span className="icon-close"></span>
+                <Trans>Cancel</Trans>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div
+                className="trash-multi-select-btn"
+                onClick={this.toggleMultiSelect}
+              >
+                <span className="icon-select"></span>
+                <Trans>Select</Trans>
+              </div>
+              <div
+                className="booklist-delete-container"
+                onClick={() => {
+                  this.props.handleDeleteDialog(true);
+                }}
+                style={this.props.isCollapsed ? { left: "calc(50% - 60px)" } : {}}
+              >
+                <Trans>Delete all books</Trans>
+              </div>
+              <ViewMode />
+            </>
+          )}
         </div>
       </>
     );

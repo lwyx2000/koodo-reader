@@ -5,6 +5,10 @@ import { ActionDialogProps, ActionDialogState } from "./interface";
 import toast from "react-hot-toast";
 import MoreAction from "../moreAction";
 import { ConfigService } from "../../../assets/lib/kookit-extra-browser.min";
+import BookUtil from "../../../utils/file/bookUtil";
+import CoverUtil from "../../../utils/file/coverUtil";
+import DatabaseService from "../../../utils/storage/databaseService";
+
 declare var window: any;
 class ActionDialog extends React.Component<
   ActionDialogProps,
@@ -70,6 +74,48 @@ class ActionDialog extends React.Component<
   handleMoreAction = (isShow: boolean) => {
     this.setState({ isShowExport: isShow });
   };
+
+  // 永久删除单本书籍
+  handlePermanentlyDeleteBook = async () => {
+    try {
+      const book = this.props.currentBook;
+      const format = book.format.toLowerCase();
+      
+      await DatabaseService.deleteRecord(book.key, "books");
+      await BookUtil.deleteBook(book.key, format);
+      CoverUtil.deleteCover(book.key);
+      await BookUtil.deleteBook("cache-" + book.key, "zip");
+      
+      // 删除各种配置和引用
+      ConfigService.deleteListConfig(book.key, "favoriteBooks");
+      ConfigService.deleteListConfig(book.key, "deletedBooks");
+      ConfigService.deleteFromAllMapConfig(book.key, "shelfList");
+      ConfigService.deleteListConfig(book.key, "recentBooks");
+      ConfigService.deleteObjectConfig(book.key, "recordLocation");
+      ConfigService.deleteObjectConfig(book.key, "readingTime");
+      
+      // 删除相关的笔记和书签
+      await DatabaseService.deleteRecordsByBookKey(book.key, "bookmarks");
+      await DatabaseService.deleteRecordsByBookKey(book.key, "notes");
+      
+      this.props.handleActionDialog(false);
+      toast.success(this.props.t("Permanently deleted"));
+      this.props.handleFetchBooks();
+      
+      // 仅在方法存在时调用
+      if (typeof this.props.handleFetchBookmarks === 'function') {
+        this.props.handleFetchBookmarks();
+      }
+      
+      if (typeof this.props.handleFetchNotes === 'function') {
+        this.props.handleFetchNotes();
+      }
+    } catch (error) {
+      console.error("Error permanently deleting book:", error);
+      toast.error(this.props.t("Delete failed"));
+    }
+  };
+
   render() {
     const moreActionProps = {
       left: this.props.left,
@@ -103,6 +149,17 @@ class ActionDialog extends React.Component<
               <span className="icon-clockwise view-icon"></span>
               <span className="action-name">
                 <Trans>Restore</Trans>
+              </span>
+            </div>
+            <div
+              className="action-dialog-delete"
+              onClick={() => {
+                this.handlePermanentlyDeleteBook();
+              }}
+            >
+              <span className="icon-trash-line view-icon"></span>
+              <span className="action-name">
+                <Trans>Permanently Delete</Trans>
               </span>
             </div>
           </div>

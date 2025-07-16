@@ -14,3 +14,59 @@
   padding-right: 10px;
   margin-bottom: 5px;
 }
+
+/* 多选模式样式 */
+.trash-multi-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  max-width: 500px;
+}
+
+.trash-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 15px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 14px;
+  height: 30px;
+  margin-right: 10px;
+}
+
+.trash-action-btn span {
+  margin-right: 5px;
+}
+
+.restore-btn {
+  background-color: #4caf50;
+  color: white;
+}
+
+.delete-btn {
+  background-color: rgb(231, 69, 69);
+  color: white;
+}
+
+.cancel-btn {
+  border: 1px solid #ccc;
+  color: #333;
+}
+
+.trash-multi-select-btn {
+  display: flex;
+  align-items: center;
+  padding: 5px 15px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 14px;
+  border: 1px solid #ccc;
+  height: 30px;
+  margin-right: 20px;
+}
+
+.trash-multi-select-btn span {
+  margin-right: 5px;
+}

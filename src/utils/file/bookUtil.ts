@@ -15,7 +15,19 @@ import Book from "../../models/Book";
 import i18n from "../../i18n";
 import { getCloudConfig } from "./common";
 import CoverUtil from "./coverUtil";
+import axios, { AxiosError } from "axios";
 declare var window: any;
+
+// 服务器API配置
+// 在开发模式下使用3001端口，生产模式使用当前域名
+const isDev = process.env.NODE_ENV === 'development';
+const SERVER_BASE_URL = process.env.REACT_APP_SERVER_URL || 
+                        (isDev ? 'http://localhost:3001' : window.location.origin);
+const BOOKS_API_ENDPOINT = "/api/books";
+
+// 调试信息
+console.log(`Using server: ${SERVER_BASE_URL}`);
+console.log(`Environment: ${process.env.NODE_ENV}`);
 
 class BookUtil {
   static addBook(key: string, format: string, buffer: ArrayBuffer) {
@@ -38,7 +50,8 @@ class BookUtil {
         throw error;
       }
     } else {
-      localforage.setItem(key, buffer);
+      // 上传到服务器而不是本地存储
+      this.uploadBookToServer(key, format, buffer);
       this.uploadBook(key, format);
     }
   }
@@ -63,7 +76,8 @@ class BookUtil {
       });
     } else {
       this.deleteCloudBook(key, format);
-      return localforage.removeItem(key);
+      // 从服务器删除书籍文件
+      return this.deleteBookFromServer(key, format);
     }
   }
   static isBookExist(key: string, format: string, bookPath: string) {
@@ -88,12 +102,9 @@ class BookUtil {
           resolve(false);
         }
       } else {
-        localforage.getItem(key).then((result) => {
-          if (result) {
-            resolve(true);
-          } else {
-            resolve(false);
-          }
+        // 检查服务器上是否存在书籍文件
+        this.checkBookExistOnServer(key, format).then((result) => {
+          resolve(result);
         });
       }
     });
@@ -134,7 +145,8 @@ class BookUtil {
         }
       });
     } else {
-      return localforage.getItem(key) as Promise<ArrayBuffer>;
+      // 从服务器获取书籍文件
+      return this.fetchBookFromServer(key, format, isArrayBuffer);
     }
   }
   static fetchAllBooks(Books: BookModel[]) {
@@ -473,6 +485,187 @@ class BookUtil {
       let syncUtil = await SyncService.getSyncUtil();
       let cloudBookList = await syncUtil.listFiles("book");
       return cloudBookList;
+    }
+  }
+
+  // 新增的服务器端书籍操作方法
+  static async uploadBookToServer(key: string, format: string, buffer: ArrayBuffer) {
+    try {
+      const formData = new FormData();
+      const blob = new Blob([buffer], {
+        type: CommonTool.getMimeType(format.toLowerCase()),
+      });
+      formData.append('file', blob, `${key}.${format.toLowerCase()}`);
+      formData.append('key', key);
+      formData.append('format', format.toLowerCase());
+
+      console.log(`Uploading book to ${SERVER_BASE_URL}${BOOKS_API_ENDPOINT}/upload`);
+      console.log(`File name: ${key}.${format.toLowerCase()}`);
+      console.log(`File size: ${Math.round(blob.size / 1024 / 1024 * 100) / 100}MB`);
+      console.log(`Content type: ${CommonTool.getMimeType(format.toLowerCase())}`);
+
+      const response = await axios.post(
+        `${SERVER_BASE_URL}${BOOKS_API_ENDPOINT}/upload`,
+        formData,
+        {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+          // 增加超时时间和进度显示
+          timeout: 300000, // 5分钟超时
+          onUploadProgress: (progressEvent) => {
+            const percentCompleted = Math.round(
+              (progressEvent.loaded * 100) / (progressEvent.total || blob.size)
+            );
+            console.log(`Upload progress: ${percentCompleted}%`);
+            // 可以在这里添加上传进度提示
+          },
+        }
+      );
+
+      if (response.status === 200) {
+        console.log('Book uploaded to server successfully');
+        console.log('Server response:', response.data);
+        toast.success(i18n.t('Book uploaded successfully'));
+        return true;
+      } else {
+        throw new Error(`Upload failed with status: ${response.status}`);
+      }
+    } catch (error) {
+      console.error('Error uploading book to server:', error);
+      
+      // 详细的错误信息
+      let errorMessage = i18n.t('Server upload failed');
+      const axiosError = error as AxiosError;
+      
+      if (axiosError.isAxiosError) {
+        if (axiosError.code === 'ECONNABORTED') {
+          errorMessage = i18n.t('Upload timeout, please try again');
+        } else if (axiosError.response) {
+          // 服务器返回了错误状态码
+          console.error('Server response data:', axiosError.response.data);
+          if (axiosError.response.status === 413) {
+            errorMessage = i18n.t('File too large, please check server limits');
+          } else {
+            errorMessage = `${i18n.t('Server error')}: ${axiosError.response.status}`;
+          }
+        } else if (axiosError.request) {
+          // 请求发出但没有收到响应
+          errorMessage = i18n.t('No response from server, please check connection');
+        }
+      }
+      
+      toast.error(errorMessage);
+      
+      // 如果服务器上传失败，回退到本地存储
+      try {
+        await localforage.setItem(key, buffer);
+        toast.success(i18n.t('Saved to browser storage as fallback'));
+        return false;
+      } catch (storageError) {
+        console.error('Error saving to local storage:', storageError);
+        toast.error(i18n.t('Failed to save locally, storage may be full'));
+        return false;
+      }
+    }
+  }
+
+  static async fetchBookFromServer(key: string, format: string, isArrayBuffer: boolean = false): Promise<File | ArrayBuffer | boolean> {
+    try {
+      const response = await axios.get(
+        `${SERVER_BASE_URL}${BOOKS_API_ENDPOINT}/${key}.${format.toLowerCase()}`,
+        {
+          responseType: 'arraybuffer',
+        }
+      );
+
+      if (response.status === 200) {
+        const arrayBuffer = response.data;
+        if (isArrayBuffer) {
+          return arrayBuffer;
+        } else {
+          const blob = new Blob([arrayBuffer]);
+          const file = new File([blob], 'data', {
+            lastModified: new Date().getTime(),
+            type: blob.type,
+          });
+          return file;
+        }
+      } else {
+        throw new Error('Fetch failed');
+      }
+    } catch (error) {
+      console.error('Error fetching book from server:', error);
+      // 如果服务器获取失败，尝试从本地存储获取
+      try {
+        const result = await localforage.getItem(key) as ArrayBuffer;
+        if (result) {
+          if (isArrayBuffer) {
+            return result;
+          } else {
+            const blob = new Blob([result]);
+            const file = new File([blob], 'data', {
+              lastModified: new Date().getTime(),
+              type: blob.type,
+            });
+            return file;
+          }
+        }
+      } catch (localError) {
+        console.error('Error fetching from local storage:', localError);
+      }
+      return false;
+    }
+  }
+
+  static async checkBookExistOnServer(key: string, format: string): Promise<boolean> {
+    try {
+      const response = await axios.head(
+        `${SERVER_BASE_URL}${BOOKS_API_ENDPOINT}/${key}.${format.toLowerCase()}`
+      );
+      return response.status === 200;
+    } catch (error) {
+      console.error('Error checking book existence on server:', error);
+      // 如果服务器检查失败，尝试检查本地存储
+      try {
+        const result = await localforage.getItem(key);
+        return !!result;
+      } catch (localError) {
+        console.error('Error checking local storage:', localError);
+        return false;
+      }
+    }
+  }
+
+  static async deleteBookFromServer(key: string, format: string): Promise<void> {
+    try {
+      const response = await axios.delete(
+        `${SERVER_BASE_URL}${BOOKS_API_ENDPOINT}/${key}.${format.toLowerCase()}`
+      );
+      
+      if (response.status === 200) {
+        console.log('Book deleted from server successfully');
+      } else {
+        throw new Error('Delete failed');
+      }
+    } catch (error) {
+      // 即使服务器返回404，我们也将其视为删除成功
+      // 因为这意味着文件已经不存在，达到了删除的目的
+      const axiosError = error as AxiosError;
+      if (axiosError.isAxiosError && axiosError.response && axiosError.response.status === 404) {
+        console.log('Book was not found on server (already deleted or never existed)');
+      } else {
+        console.error('Error deleting book from server:', error);
+        // 不再显示错误提示，因为不影响主流程继续执行
+        // toast.error(i18n.t('Failed to delete book from server'));
+      }
+    }
+    
+    // 同时删除本地存储中的书籍（如果存在）
+    try {
+      await localforage.removeItem(key);
+    } catch (localError) {
+      console.error('Error deleting from local storage:', localError);
     }
   }
 }
