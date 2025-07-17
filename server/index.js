@@ -297,13 +297,13 @@ const distDir = path.join(__dirname, 'dist');
 if (fs.existsSync(distDir)) {
   app.use(express.static(distDir));
   console.log(`Serving static files from: ${distDir}`);
-  
+
   // 所有不匹配的路由返回index.html
-  app.get('*', (req, res) => {
+app.get('*', (req, res) => {
     if (!req.path.startsWith('/api/')) {
       res.sendFile(path.join(distDir, 'index.html'));
     }
-  });
+});
 } else {
   console.log(`No static files to serve (${distDir} does not exist)`);
 }

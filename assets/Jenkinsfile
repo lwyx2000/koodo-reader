@@ -59,18 +59,24 @@ pipeline {
             }
         }
 
-        // 3. 部署静态文件
-        stage('Deploy to Nginx') {
+        // 3. 部署前端静态文件
+        stage('Deploy Frontend') {
             steps {
-                script {
-                    sshagent(['my-ssh-credentials']) { // 请替换为实际配置的凭证ID
-                        sh """
-                            ssh sos@192.168.3.53 "rm -rf /home/sos/apps/koodo-reader/*"
-                            scp -r build/* sos@192.168.3.53:/home/sos/apps/koodo-reader/
-                            ssh sos@192.168.3.53 "sudo systemctl reload nginx"
-                        """
-                    }
-                }
+                sh """
+                    echo '${SSH_PASSWORD}' | ssh -i ~/.ssh/id_rsa ${SSH_USER}@192.168.3.53 "rm -rf /home/sos/apps/koodo-reader/*"
+                    scp -r build/* ${SSH_USER}@192.168.3.53:/home/sos/apps/koodo-reader/
+                    ssh ${SSH_USER}@192.168.3.53 "sudo -S systemctl reload nginx"
+                """
+            }
+        }
+
+        // 4. 部署后端server并启动
+        stage('Deploy Backend') {
+            steps {
+                sh """
+                    scp -r server ${SSH_USER}@192.168.3.53:/home/sos/apps/koodo-reader/
+                    ssh ${SSH_USER}@192.168.3.53 "cd /home/sos/apps/koodo-reader/server && npm ci && nohup node index.js > server.log 2>&1 &"
+                """
             }
         }
     }

@@ -12,16 +12,14 @@ export interface HeaderProps extends RouteComponentProps<any> {
   bookmarks: BookmarkModel[];
   notes: NoteModel[];
   books: BookModel[];
-  defaultSyncOption: string;
+
   handleSortDisplay: (isSortDisplay: boolean) => void;
   handleSetting: (isSettingOpen: boolean) => void;
   handleAbout: (isAboutOpen: boolean) => void;
   handleBackupDialog: (isBackup: boolean) => void;
   handleFeedbackDialog: (isShow: boolean) => void;
   handleFetchAuthed: () => void;
-  handleFetchDefaultSyncOption: () => void;
-  handleFetchLoginOptionList: () => void;
-  handleFetchDataSourceList: () => void;
+
   handleDrag: (isDrag: boolean) => void;
   handleFetchBooks: () => void;
   t: (title: string) => string;
@@ -37,5 +35,4 @@ export interface HeaderState {
   isDataChange: boolean;
   isDeveloperVer: boolean;
   isHidePro: boolean;
-  isSync: boolean;
 }
